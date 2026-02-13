@@ -28,10 +28,7 @@ jobs:
         country: [de, nl]
 
     # Skip countries not selected in manual dispatch
-    if: >-
-      github.event_name != 'workflow_dispatch'
-      || inputs.country == 'all'
-      || inputs.country == matrix.country
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.country == 'all' || github.event.inputs.country == matrix.country }}
 
     steps:
     - name: Checkout code
