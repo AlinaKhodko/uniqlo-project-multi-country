@@ -82,7 +82,10 @@ def create_message_from_csv(csv_path, max_items=40):
         message += f"\n🔗 [{name}]({url})"
         message += f"\n💸 *-{int(discount)}%* | 🪙 {promo} | ⭐ {rating} ({int(float(reviews))} reviews)"
         if sizes and sizes != 'Unavailable':
-            message += f"\n🧵 Sizes: `{sizes}`"
+            for variant in str(sizes).split('|'):
+                variant = variant.strip()
+                if variant:
+                    message += f"\n🧵 `{variant}`"
         if action:
             message += f"\n🎯 _{action}_"
         message += "\n"
