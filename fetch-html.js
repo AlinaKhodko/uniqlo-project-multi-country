@@ -74,6 +74,14 @@ try {
     console.log('No cookie popup found');
   }
 
+  // Wait for product tiles to render before scrolling
+  try {
+    await page.waitForSelector('[data-testid="productTile"]', { timeout: 30000 });
+    console.log('Product tiles detected, starting scroll');
+  } catch {
+    console.log('WARNING: No product tiles appeared after 30s, will try scrolling anyway');
+  }
+
   // Scroll loop
   let previousCount = 0;
   let stableCounter = 0;
@@ -96,7 +104,7 @@ try {
     await page.evaluate(() => {
       window.scrollTo(0, document.body.scrollHeight);
     });
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 3000));
   }
 
   console.log('Finished scrolling');
@@ -111,7 +119,8 @@ try {
   // Validate HTML contains product tiles before saving
   const productTileCount = (html.match(/data-testid="productTile"/g) || []).length;
   if (productTileCount === 0) {
-    console.error('ERROR: No product tiles found in HTML. Aborting save.');
+    fs.writeFileSync(path.resolve(argv.output + '.debug.html'), timestampComment + html, 'utf8');
+    console.error('ERROR: No product tiles found in HTML. Debug HTML saved to ' + argv.output + '.debug.html');
     process.exit(1);
   }
   console.log(`Validated: ${productTileCount} product tiles in HTML`);
