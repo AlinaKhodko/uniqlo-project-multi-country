@@ -93,11 +93,11 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ env.TG_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ env.TG_CHAT_ID }}
 
-    - name: Insert into DB
-      run: python insert-db.py --country ${{ matrix.country }}
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    #- name: Insert into DB
+    #  run: python insert-db.py --country ${{ matrix.country }}
+    #  env:
+    #    SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+    #    SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
     - name: Print total duration
       run: |
