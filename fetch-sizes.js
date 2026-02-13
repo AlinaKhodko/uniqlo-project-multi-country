@@ -15,6 +15,12 @@ const argv = yargs
     description: 'Country code (e.g. de, nl, fr)',
     choices: Object.keys(countryConfig)
   })
+  .option('limit', {
+    alias: 'n',
+    type: 'number',
+    default: 100,
+    description: 'Number of products to process'
+  })
   .help()
   .argv;
 
@@ -22,7 +28,45 @@ const config = countryConfig[argv.country];
 
 const INPUT_CSV = 'product-ids/filtered-uniqlo-products.csv';
 const OUTPUT_CSV = 'product-ids/uniqlo-with-sizes.csv';
-const N = 100; // Number of products to process
+const N = argv.limit;
+const CONCURRENCY = 5;
+const BATCH_SIZE = 20;
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+async function withRetry(fn, attempts = 2, backoff = 2000) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === attempts - 1) throw err;
+      console.warn(`Retry ${i + 1}/${attempts - 1}: ${err.message}`);
+      await sleep(backoff * (i + 1));
+    }
+  }
+}
+
+async function acceptCookies(browser, localePath) {
+  const page = await browser.newPage();
+  try {
+    await page.goto(`https://www.uniqlo.com/${localePath}`, {
+      waitUntil: 'networkidle2',
+      timeout: 20000
+    });
+    try {
+      await page.waitForSelector('button#onetrust-accept-btn-handler', { timeout: 5000 });
+      await page.click('button#onetrust-accept-btn-handler');
+      await sleep(1000);
+      console.log('Accepted cookies on throwaway page');
+    } catch {
+      console.log('No cookie popup found');
+    }
+  } finally {
+    await page.close();
+  }
+}
 
 async function extractColorAndSizes(url, browser, colorLabel) {
   const page = await browser.newPage();
@@ -33,13 +77,6 @@ async function extractColorAndSizes(url, browser, colorLabel) {
 
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
-
-    // Accept cookies
-    try {
-      await page.waitForSelector('button#onetrust-accept-btn-handler', { timeout: 5000 });
-      await page.click('button#onetrust-accept-btn-handler');
-      await page.waitForTimeout(1000);
-    } catch {}
 
     // Extract selected color using country-specific label
     const color = await page.evaluate((label) => {
@@ -66,8 +103,6 @@ async function extractColorAndSizes(url, browser, colorLabel) {
       return `${pathPart}${code}-${name.toUpperCase()}`;
     }, colorLabel);
 
-
-
     // Extract available sizes
     await page.waitForSelector('.size-chip-group', { timeout: 10000 });
     const sizes = await page.evaluate(() => {
@@ -92,9 +127,15 @@ async function extractColorAndSizes(url, browser, colorLabel) {
   }
 }
 
+function saveProgress(rows, outputPath) {
+  const csvOutput = parse(rows, { fields: Object.keys(rows[0]) });
+  fs.writeFileSync(outputPath, csvOutput, 'utf8');
+}
+
 (async () => {
   const rows = [];
   const colorLabel = config.color_label;
+  const outputPath = path.join(__dirname, OUTPUT_CSV);
 
   // Read CSV
   await new Promise((resolve, reject) => {
@@ -106,12 +147,17 @@ async function extractColorAndSizes(url, browser, colorLabel) {
   });
 
   const browser = await puppeteer.launch({
-    headless: 'new', // or true
+    headless: 'new',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--window-size=1400,1000']
   });
 
-  for (let i = 0; i < Math.min(N, rows.length); i++) {
-    const row = rows[i];
+  // Accept cookies once on a throwaway page
+  await acceptCookies(browser, config.locale_path);
+
+  const total = Math.min(N, rows.length);
+  let processed = 0;
+
+  async function processProduct(row) {
     const urls = row['Color Variant URLs']
       ? row['Color Variant URLs'].split('|').map(url => url.trim()).filter(Boolean)
       : [];
@@ -120,20 +166,30 @@ async function extractColorAndSizes(url, browser, colorLabel) {
 
     console.log(`\n${row['Product Name']} (${urls.length} color variants)`);
 
+    // Color variants stay sequential (only 3-5 URLs per product)
     for (const url of urls) {
       console.log(`${url}`);
-      const result = await extractColorAndSizes(url, browser, colorLabel);
+      const result = await withRetry(() => extractColorAndSizes(url, browser, colorLabel));
       if (result) variants.push(result);
     }
 
     row['Available Sizes'] = variants.join(' | ') || 'Unavailable';
+    processed++;
 
-    // Save after every product
-    const csvOutput = parse(rows, { fields: Object.keys(rows[0]) });
-    fs.writeFileSync(path.join(__dirname, OUTPUT_CSV), csvOutput, 'utf8');
-    console.log(`Saved progress after "${row['Product Name']}"`);
+    if (processed % BATCH_SIZE === 0) {
+      saveProgress(rows, outputPath);
+      console.log(`Saved progress (${processed}/${total})`);
+    }
   }
 
+  // Process products with concurrency pool
+  for (let i = 0; i < total; i += CONCURRENCY) {
+    const batch = rows.slice(i, Math.min(i + CONCURRENCY, total));
+    await Promise.all(batch.map(row => processProduct(row)));
+  }
+
+  // Final save
+  saveProgress(rows, outputPath);
   await browser.close();
   console.log(`\nFinal CSV saved to ${OUTPUT_CSV}`);
 })();

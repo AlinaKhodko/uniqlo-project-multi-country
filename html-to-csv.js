@@ -13,6 +13,12 @@ const argv = yargs
     description: 'Country code (e.g. de, nl, fr)',
     choices: Object.keys(countryConfig)
   })
+  .option('output', {
+    alias: 'o',
+    type: 'string',
+    default: './product-ids/uniqlo-products.csv',
+    description: 'Output CSV file path'
+  })
   .help()
   .argv;
 
@@ -52,14 +58,27 @@ console.log(`Found ${productBlocks.length} product blocks`);
 productBlocks.each((_, el) => {
   const $el = $(el);
 
-  const allTexts = $el.find('[data-testid="ITOTypography"]')
+  const typoElements = $el.find('[data-testid="ITOTypography"]');
+  const allTexts = typoElements
     .map((_, d) => $(d).text().trim())
     .get()
     .filter(Boolean);
 
+  if (allTexts.length < 4) {
+    const href = $el.attr('href') || '(no href)';
+    console.warn(`Warning: product block has ${allTexts.length} ITOTypography elements (expected >=4): ${href}`);
+  }
+
   const name = fixMojibake(allTexts[1] || '');
   const promoPrice = fixMojibake(allTexts[2] || '');
   const originalPrice = fixMojibake(allTexts[3] || '');
+
+  if (promoPrice && !/^[\d.,\s€$£¥]+$/.test(promoPrice)) {
+    console.warn(`Warning: unexpected promo price format "${promoPrice}" for "${name}"`);
+  }
+  if (originalPrice && !/^[\d.,\s€$£¥]+$/.test(originalPrice)) {
+    console.warn(`Warning: unexpected original price format "${originalPrice}" for "${name}"`);
+  }
 
   const rating = $el.find('.fr-ec-rating-average-product-tile').text().trim();
   const reviews = $el.find('.fr-ec-rating-static__count-product-tile').text().trim().replace(/[()]/g, '');
@@ -107,8 +126,8 @@ productBlocks.each((_, el) => {
   }
 });
 
-// Write to CSV
-const csv = rows.map(row => row.map(val => `"${val}"`).join(',')).join('\n');
-fs.writeFileSync('./product-ids/uniqlo-products.csv', csv, 'utf8');
+// Write to CSV (RFC 4180: escape " as "")
+const csvData = rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',')).join('\n');
+fs.writeFileSync(argv.output, csvData, 'utf8');
 
-console.log(`Saved ${rows.length - 1} products to uniqlo-products.csv with timestamp: ${fetchedAt}`);
+console.log(`Saved ${rows.length - 1} products to ${argv.output} with timestamp: ${fetchedAt}`);
