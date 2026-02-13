@@ -67,7 +67,7 @@ def create_message_from_csv(csv_path, max_items=40):
 
     df = df.sort_values(by='Product Name', ascending=False).head(max_items)
 
-    message = f"*🛍️ UNIQLO Digest ({date_str})*\n"
+    message = f"*🛍️ UNIQLO Multi ({date_str})*\n"
 
     for _, row in df.iterrows():
         name = row['Product Name']
