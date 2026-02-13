@@ -1,4 +1,4 @@
-name: UNIQLO Automation
+name: UNIQLO Multi
 
 on:
   schedule:
