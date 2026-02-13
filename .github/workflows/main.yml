@@ -20,15 +20,25 @@ on:
           - nl
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.country }}" != "all" ]; then
+            echo 'matrix={"country":["${{ github.event.inputs.country }}"]}' >> $GITHUB_OUTPUT
+          else
+            echo 'matrix={"country":["de","nl"]}' >> $GITHUB_OUTPUT
+          fi
+
   run-country:
+    needs: setup
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        country: [de, nl]
-
-    # Skip countries not selected in manual dispatch
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.country == 'all' || github.event.inputs.country == matrix.country }}
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
 
     steps:
     - name: Checkout code
