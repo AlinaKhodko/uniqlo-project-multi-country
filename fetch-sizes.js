@@ -68,6 +68,34 @@ async function acceptCookies(browser, localePath) {
   }
 }
 
+async function discoverColorUrls(page, baseUrl) {
+  // Extract all color variant URLs from the product page's color chips
+  const colorCodes = await page.evaluate(() => {
+    const chips = document.querySelectorAll('[data-testid="color-chip"] a, .color-chip a, a[href*="colorDisplayCode"]');
+    const codes = new Set();
+    chips.forEach(chip => {
+      const href = chip.getAttribute('href') || '';
+      const match = href.match(/colorDisplayCode=(\d+)/);
+      if (match) codes.add(match[1]);
+    });
+    // Also try image sources as fallback
+    if (codes.size === 0) {
+      document.querySelectorAll('img[src*="goods_"]').forEach(img => {
+        const match = (img.getAttribute('src') || '').match(/goods_(\d{2})_/);
+        if (match) codes.add(match[1]);
+      });
+    }
+    return [...codes];
+  });
+
+  if (colorCodes.length === 0) return [];
+
+  // Build URLs from the current page URL pattern
+  const urlObj = new URL(baseUrl);
+  const basePath = urlObj.origin + urlObj.pathname;
+  return colorCodes.map(code => `${basePath}?colorDisplayCode=${code}`);
+}
+
 async function extractColorAndSizes(url, browser, colorLabel) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1400, height: 1000 });
@@ -158,15 +186,36 @@ function saveProgress(rows, outputPath) {
   let processed = 0;
 
   async function processProduct(row) {
-    const urls = row['Color Variant URLs']
+    let urls = row['Color Variant URLs']
       ? row['Color Variant URLs'].split('|').map(url => url.trim()).filter(Boolean)
       : [];
+
+    // Discover all color variants from the first product page
+    if (urls.length > 0) {
+      try {
+        const discoveryPage = await browser.newPage();
+        await discoveryPage.setViewport({ width: 1400, height: 1000 });
+        await discoveryPage.setUserAgent(
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        );
+        await discoveryPage.goto(urls[0], { waitUntil: 'networkidle2', timeout: 20000 });
+        const discoveredUrls = await discoverColorUrls(discoveryPage, urls[0]);
+        await discoveryPage.close();
+
+        if (discoveredUrls.length > urls.length) {
+          console.log(`Discovered ${discoveredUrls.length} color variants (CSV had ${urls.length})`);
+          urls = discoveredUrls;
+        }
+      } catch (err) {
+        console.warn(`Color discovery failed, using CSV URLs: ${err.message}`);
+      }
+    }
 
     const variants = [];
 
     console.log(`\n${row['Product Name']} (${urls.length} color variants)`);
 
-    // Color variants stay sequential (only 3-5 URLs per product)
+    // Color variants stay sequential
     for (const url of urls) {
       console.log(`${url}`);
       const result = await withRetry(() => extractColorAndSizes(url, browser, colorLabel));
