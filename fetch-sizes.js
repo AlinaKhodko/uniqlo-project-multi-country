@@ -69,28 +69,23 @@ async function acceptCookies(browser, localePath) {
 }
 
 async function discoverColorUrls(page, baseUrl) {
-  // Extract all color variant URLs from the product page's color chips
-  const colorCodes = await page.evaluate(() => {
-    const chips = document.querySelectorAll('[data-testid="color-chip"] a, .color-chip a, a[href*="colorDisplayCode"]');
+  // Extract the current product ID to filter out recommendation links
+  const productId = baseUrl.match(/products\/([^/]+)/)?.[1];
+  if (!productId) return [];
+
+  const colorCodes = await page.evaluate((pid) => {
     const codes = new Set();
-    chips.forEach(chip => {
-      const href = chip.getAttribute('href') || '';
+    // Only match links that contain the SAME product ID
+    document.querySelectorAll(`a[href*="${pid}"][href*="colorDisplayCode"]`).forEach(link => {
+      const href = link.getAttribute('href') || '';
       const match = href.match(/colorDisplayCode=(\d+)/);
       if (match) codes.add(match[1]);
     });
-    // Also try image sources as fallback
-    if (codes.size === 0) {
-      document.querySelectorAll('img[src*="goods_"]').forEach(img => {
-        const match = (img.getAttribute('src') || '').match(/goods_(\d{2})_/);
-        if (match) codes.add(match[1]);
-      });
-    }
     return [...codes];
-  });
+  }, productId);
 
-  if (colorCodes.length === 0) return [];
+  if (colorCodes.length === 0 || colorCodes.length > 15) return [];
 
-  // Build URLs from the current page URL pattern
   const urlObj = new URL(baseUrl);
   const basePath = urlObj.origin + urlObj.pathname;
   return colorCodes.map(code => `${basePath}?colorDisplayCode=${code}`);
