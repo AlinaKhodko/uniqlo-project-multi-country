@@ -1,0 +1,26 @@
+{
+  "de": {
+    "locale_path": "de/de",
+    "sale_url": "https://www.uniqlo.com/de/de/feature/sale/women",
+    "accept_language": "de-DE,de;q=0.9,en;q=0.8",
+    "color_label": "Farbe:",
+    "gender_keywords": { "woman": ["/damen"], "man": ["/herren"] },
+    "filter_mode": "action_filtered"
+  },
+  "nl": {
+    "locale_path": "nl/nl",
+    "sale_url": "https://www.uniqlo.com/nl/nl/feature/sale/women",
+    "accept_language": "nl-NL,nl;q=0.9,en;q=0.8",
+    "color_label": "Kleur:",
+    "gender_keywords": { "woman": ["/dames"], "man": ["/heren"] },
+    "filter_mode": "all"
+  },
+  "fr": {
+    "locale_path": "fr/fr",
+    "sale_url": "https://www.uniqlo.com/fr/fr/feature/sale/women",
+    "accept_language": "fr-FR,fr;q=0.9,en;q=0.8",
+    "color_label": "Couleur\u00a0:",
+    "gender_keywords": { "woman": ["/femme"], "man": ["/homme"] },
+    "filter_mode": "action_filtered"
+  }
+}

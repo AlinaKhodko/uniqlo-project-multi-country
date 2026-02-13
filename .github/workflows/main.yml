@@ -1,0 +1,100 @@
+name: UNIQLO Automation
+
+on:
+  schedule:
+    # Run at xx:29 every hour from 03:29 to 20:29 UTC
+    - cron: '29 3-20 * * *'
+
+    # Run at xx:00 every hour from 04:00 to 21:00 UTC
+    - cron: '0 4-21 * * *'
+
+  workflow_dispatch:
+    inputs:
+      country:
+        description: 'Country to run (leave empty for all)'
+        required: false
+        type: choice
+        options:
+          - all
+          - de
+          - nl
+
+jobs:
+  run-country:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        country: [de, nl]
+
+    # Skip countries not selected in manual dispatch
+    if: >-
+      github.event_name != 'workflow_dispatch'
+      || inputs.country == 'all'
+      || inputs.country == matrix.country
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Random sleep
+      run: |
+        SECONDS=$((1 + RANDOM % 29))
+        echo "Sleeping for $SECONDS seconds..."
+        sleep $SECONDS
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+
+    - name: Start timer
+      run: echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
+
+    - name: Install Node dependencies
+      run: |
+        npm init
+        npm install puppeteer csv-parser json2csv dotenv cheerio yargs
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Python dependencies
+      run: pip install -r requirements.txt
+
+    - name: Set Telegram secrets
+      run: |
+        if [ "${{ matrix.country }}" = "de" ]; then
+          echo "TG_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> $GITHUB_ENV
+          echo "TG_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> $GITHUB_ENV
+        elif [ "${{ matrix.country }}" = "nl" ]; then
+          echo "TG_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN_NL }}" >> $GITHUB_ENV
+          echo "TG_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID_NL }}" >> $GITHUB_ENV
+        fi
+
+    - name: Run Workflow
+      run: |
+        node fetch-html.js --country ${{ matrix.country }} --output product-ids/uniqlo-raw.html
+        node html-to-csv.js --country ${{ matrix.country }}
+        python deal-filter.py --country ${{ matrix.country }}
+        node fetch-sizes.js --country ${{ matrix.country }} || echo "fetch-sizes.js failed, continuing..."
+        python filter-sizes.py --input product-ids/uniqlo-with-sizes.csv --output product-ids/sizes-filtered.csv
+        python send-telegram.py
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ env.TG_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ env.TG_CHAT_ID }}
+
+    - name: Insert into DB
+      run: python insert-db.py --country ${{ matrix.country }}
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+    - name: Print total duration
+      run: |
+        END_TIME=$(date +%s)
+        echo "Total duration: $((END_TIME - START_TIME)) seconds"
+      env:
+        START_TIME: ${{ env.START_TIME }}

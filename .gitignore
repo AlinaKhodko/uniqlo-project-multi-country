@@ -1,0 +1,36 @@
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.ipynb_checkpoints
+
+# === Node.js ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# === Virtual Environments ===
+.venv/
+venv/
+env/
+ENV/
+.venv.bak/
+
+# === Logs and Temp ===
+*.log
+*.tmp
+
+# === Secret Configs ===
+.env
+*.env
+
+# === OS/System Files ===
+.DS_Store
+Thumbs.db
+
+# === Dash artifacts (optional if you're building dashboards) ===
+__dash_cache__/
+*.pyc
+*.pkl
