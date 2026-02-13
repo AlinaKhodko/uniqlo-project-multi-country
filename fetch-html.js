@@ -86,9 +86,9 @@ try {
     );
     console.log(`Scroll ${i + 1}: ${currentCount} products loaded`);
 
-    if (currentCount === previousCount) {
+    if (currentCount === previousCount && currentCount > 0) {
       stableCounter++;
-    } else {
+    } else if (currentCount !== previousCount) {
       stableCounter = 0;
       previousCount = currentCount;
     }
