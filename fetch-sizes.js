@@ -100,7 +100,7 @@ async function readColorAndSizes(page, colorLabel) {
   return { color, sizes };
 }
 
-// Visit one color variant URL and extract its color name + available sizes
+// Visit one color variant URL, read color+sizes, and discover all other color URLs on the page
 async function extractColorSizes(url, browser, colorLabel, productName) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1400, height: 1000 });
@@ -112,16 +112,48 @@ async function extractColorSizes(url, browser, colorLabel, productName) {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
     const { color, sizes } = await readColorAndSizes(page, colorLabel);
 
-    if (color && sizes.length > 0) {
+    // Discover all color variant URLs from this product page
+    const discoveredUrls = await page.evaluate(() => {
+      const found = new Set();
+      // Look for links with colorDisplayCode in href (same product)
+      const productMatch = window.location.pathname.match(/\/products\/([^/]+)/);
+      if (!productMatch) return [];
+      const productId = productMatch[1];
+
+      document.querySelectorAll('a[href*="colorDisplayCode"]').forEach(a => {
+        const href = a.getAttribute('href') || '';
+        if (href.includes(`/products/${productId}/`)) {
+          found.add(new URL(href, window.location.origin).href);
+        }
+      });
+
+      // Also look for color images with goods_XX_ pattern
+      document.querySelectorAll('img[src*="goods_"]').forEach(img => {
+        const src = img.getAttribute('src') || '';
+        const match = src.match(/goods_(\d{2})_/);
+        if (match) {
+          const basePath = window.location.pathname.replace(/\?.*$/, '');
+          found.add(new URL(`${basePath}?colorDisplayCode=${match[1]}`, window.location.origin).href);
+        }
+      });
+
+      return [...found];
+    });
+
+    const variant = (color && sizes.length > 0)
+      ? `${color}: ${sizes.join(', ')}`
+      : null;
+
+    if (variant) {
       console.log(`  [${productName}] ${color}: ${sizes.join(', ')}`);
-      return `${color}: ${sizes.join(', ')}`;
     } else {
       console.log(`  [${productName}] ${color || 'Unknown'}: ${sizes.length > 0 ? sizes.join(', ') : 'None'}`);
-      return null;
     }
+
+    return { variant, discoveredUrls };
   } catch (err) {
     console.error(`  [${productName}] Failed (${url}): ${err.message}`);
-    return null;
+    return { variant: null, discoveredUrls: [] };
   } finally {
     await page.close();
   }
@@ -158,23 +190,39 @@ function saveProgress(rows, outputPath) {
   let processed = 0;
 
   async function processProduct(row) {
-    const urls = row['Color Variant URLs']
+    const csvUrls = row['Color Variant URLs']
       ? row['Color Variant URLs'].split('|').map(url => url.trim()).filter(Boolean)
       : [];
 
-    if (urls.length === 0) {
+    if (csvUrls.length === 0) {
       row['Available Sizes'] = 'Unavailable';
       processed++;
       return;
     }
 
-    console.log(`\n[${row['Product Name']}] ${urls.length} color(s) to check`);
+    console.log(`\n[${row['Product Name']}] ${csvUrls.length} color(s) from CSV`);
 
-    // Visit each color variant URL individually
     const variants = [];
-    for (const url of urls) {
-      const result = await extractColorSizes(url, browser, colorLabel, row['Product Name']);
-      if (result) variants.push(result);
+    const visitedUrls = new Set();
+
+    // Visit the first URL and discover all colors from the product page
+    const firstUrl = csvUrls[0];
+    visitedUrls.add(firstUrl);
+    const { variant: firstVariant, discoveredUrls } = await extractColorSizes(firstUrl, browser, colorLabel, row['Product Name']);
+    if (firstVariant) variants.push(firstVariant);
+
+    // Merge CSV URLs + discovered URLs, skip already visited
+    const allUrls = [...new Set([...csvUrls, ...discoveredUrls])];
+    const remaining = allUrls.filter(u => !visitedUrls.has(u));
+
+    if (remaining.length > 0) {
+      console.log(`  [${row['Product Name']}] Discovered ${remaining.length} additional color(s)`);
+    }
+
+    for (const url of remaining) {
+      visitedUrls.add(url);
+      const { variant } = await extractColorSizes(url, browser, colorLabel, row['Product Name']);
+      if (variant) variants.push(variant);
     }
 
     row['Available Sizes'] = variants.length > 0 ? variants.join(' | ') : 'Unavailable';
