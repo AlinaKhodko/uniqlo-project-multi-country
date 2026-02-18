@@ -29,8 +29,8 @@ const config = countryConfig[argv.country];
 const INPUT_CSV = 'product-ids/filtered-uniqlo-products.csv';
 const OUTPUT_CSV = 'product-ids/uniqlo-with-sizes.csv';
 const N = argv.limit;
-const CONCURRENCY = 1;
-const BATCH_SIZE = 1;
+const CONCURRENCY = 3;
+const BATCH_SIZE = 5;
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
