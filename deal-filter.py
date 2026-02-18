@@ -100,7 +100,7 @@ def classify_action(row):
 
     if total >= 7:
         return 'STEAL'
-    elif total >= 5:
+    elif total >= 6:
         return 'GREAT DEAL'
     elif price_pts >= 2 and discount_pts >= 2 and quality_pts == 0:
         return 'BARGAIN BIN'
@@ -116,7 +116,7 @@ def classify_action(row):
 df['Action'] = df.apply(classify_action, axis=1)
 
 # Select products based on filter_mode from config
-selected_actions = {'STEAL', 'GREAT DEAL', 'GOOD DEAL', 'BARGAIN BIN', 'QUALITY PICK'}
+selected_actions = {'STEAL', 'GREAT DEAL'}
 
 if config['filter_mode'] == 'all':
     filtered_ids = (
