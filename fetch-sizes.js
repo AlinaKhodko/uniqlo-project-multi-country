@@ -112,23 +112,26 @@ async function extractColorSizes(url, browser, colorLabel, productName) {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
     const { color, sizes } = await readColorAndSizes(page, colorLabel);
 
-    // Discover all color variant URLs from the product page's color picker
+    // Discover all color codes from the color chip images (chip/goods_XX_PRODUCTID pattern)
     const discoveredUrls = await page.evaluate(() => {
-      const found = new Set();
       const productMatch = window.location.pathname.match(/\/products\/([^/]+)/);
       if (!productMatch) return [];
-      const productId = productMatch[1];
+      const fullId = productMatch[1]; // e.g. E469871-000
+      const numericId = fullId.replace(/^E/, '').replace(/-\d+$/, ''); // e.g. 469871
       const basePath = window.location.pathname.replace(/\?.*$/, '');
 
-      // Only look for links to the same product with colorDisplayCode
-      document.querySelectorAll('a[href*="colorDisplayCode"]').forEach(a => {
-        const href = a.getAttribute('href') || '';
-        if (href.includes(`/products/${productId}/`)) {
-          found.add(new URL(href, window.location.origin).href);
-        }
+      const codes = new Set();
+      const chipPattern = new RegExp(`chip/goods_(\\d{2})_${numericId}`);
+
+      document.querySelectorAll('img').forEach(img => {
+        const src = img.getAttribute('src') || '';
+        const match = src.match(chipPattern);
+        if (match) codes.add(match[1]);
       });
 
-      return [...found];
+      return [...codes].map(code =>
+        new URL(`${basePath}?colorDisplayCode=${code}`, window.location.origin).href
+      );
     });
 
     const variant = (color && sizes.length > 0)
