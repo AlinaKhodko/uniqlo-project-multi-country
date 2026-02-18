@@ -112,28 +112,19 @@ async function extractColorSizes(url, browser, colorLabel, productName) {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
     const { color, sizes } = await readColorAndSizes(page, colorLabel);
 
-    // Discover all color variant URLs from this product page
+    // Discover all color variant URLs from the product page's color picker
     const discoveredUrls = await page.evaluate(() => {
       const found = new Set();
-      // Look for links with colorDisplayCode in href (same product)
       const productMatch = window.location.pathname.match(/\/products\/([^/]+)/);
       if (!productMatch) return [];
       const productId = productMatch[1];
+      const basePath = window.location.pathname.replace(/\?.*$/, '');
 
+      // Only look for links to the same product with colorDisplayCode
       document.querySelectorAll('a[href*="colorDisplayCode"]').forEach(a => {
         const href = a.getAttribute('href') || '';
         if (href.includes(`/products/${productId}/`)) {
           found.add(new URL(href, window.location.origin).href);
-        }
-      });
-
-      // Also look for color images with goods_XX_ pattern
-      document.querySelectorAll('img[src*="goods_"]').forEach(img => {
-        const src = img.getAttribute('src') || '';
-        const match = src.match(/goods_(\d{2})_/);
-        if (match) {
-          const basePath = window.location.pathname.replace(/\?.*$/, '');
-          found.add(new URL(`${basePath}?colorDisplayCode=${match[1]}`, window.location.origin).href);
         }
       });
 
