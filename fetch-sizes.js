@@ -100,109 +100,31 @@ async function readColorAndSizes(page, colorLabel) {
   return { color, sizes };
 }
 
-// Visit one product page and extract ALL color variants by clicking through chips
-async function extractAllVariants(url, browser, colorLabel, productName) {
+// Visit one color variant URL and extract its color name + available sizes
+async function extractColorSizes(url, browser, colorLabel, productName) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1400, height: 1000 });
   await page.setUserAgent(
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
   );
 
-  const variants = [];
-  const seenColors = new Set();
-
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
+    const { color, sizes } = await readColorAndSizes(page, colorLabel);
 
-    // Find all color chip elements — try multiple selectors
-    let chipCount = await page.evaluate(() => {
-      const selectors = [
-        '.color-picker .color-chip',
-        '[class*="colorChip"]',
-        '[class*="color-chip"]',
-        '[data-testid*="color-chip"]',
-        '.pdp-color-chips button',
-        '.pdp-color-chips a',
-      ];
-      for (const sel of selectors) {
-        const chips = document.querySelectorAll(sel);
-        if (chips.length > 1) return chips.length;
-      }
-      const colorSection = document.querySelector('[class*="colorPicker"], [class*="color-picker"], [class*="ColorPicker"]');
-      if (colorSection) {
-        const clickables = colorSection.querySelectorAll('button, a, [role="radio"]');
-        if (clickables.length > 1) return clickables.length;
-      }
-      return 0;
-    });
-
-    if (chipCount > 1 && chipCount <= 15) {
-      console.log(`  [${productName}] Found ${chipCount} color chips, clicking through...`);
-
-      for (let i = 0; i < chipCount; i++) {
-        try {
-          // Re-query and click the i-th chip (DOM may update after clicks)
-          const clicked = await page.evaluate((index) => {
-            const selectors = [
-              '.color-picker .color-chip',
-              '[class*="colorChip"]',
-              '[class*="color-chip"]',
-              '[data-testid*="color-chip"]',
-              '.pdp-color-chips button',
-              '.pdp-color-chips a',
-            ];
-            for (const sel of selectors) {
-              const chips = document.querySelectorAll(sel);
-              if (chips.length > 1 && chips[index]) {
-                chips[index].click();
-                return true;
-              }
-            }
-            const colorSection = document.querySelector('[class*="colorPicker"], [class*="color-picker"], [class*="ColorPicker"]');
-            if (colorSection) {
-              const clickables = colorSection.querySelectorAll('button, a, [role="radio"]');
-              if (clickables[index]) {
-                clickables[index].click();
-                return true;
-              }
-            }
-            return false;
-          }, i);
-
-          if (!clicked) continue;
-          await sleep(1500); // Wait for page to update after color switch
-
-          const { color, sizes } = await readColorAndSizes(page, colorLabel);
-          if (color && !seenColors.has(color)) {
-            seenColors.add(color);
-            if (sizes.length > 0) {
-              variants.push(`${color}: ${sizes.join(', ')}`);
-              console.log(`  [${productName}] ${color}: ${sizes.join(', ')}`);
-            } else {
-              console.log(`  [${productName}] ${color}: no sizes available`);
-            }
-          }
-        } catch (err) {
-          console.warn(`  [${productName}] Chip ${i} failed: ${err.message}`);
-        }
-      }
+    if (color && sizes.length > 0) {
+      console.log(`  [${productName}] ${color}: ${sizes.join(', ')}`);
+      return `${color}: ${sizes.join(', ')}`;
     } else {
-      // No color chips found or just one — extract current color only
-      const { color, sizes } = await readColorAndSizes(page, colorLabel);
-      if (color && sizes.length > 0) {
-        variants.push(`${color}: ${sizes.join(', ')}`);
-        console.log(`  [${productName}] ${color}: ${sizes.join(', ')}`);
-      } else {
-        console.log(`  [${productName}] ${color || 'Unknown'}: ${sizes.length > 0 ? sizes.join(', ') : 'None'}`);
-      }
+      console.log(`  [${productName}] ${color || 'Unknown'}: ${sizes.length > 0 ? sizes.join(', ') : 'None'}`);
+      return null;
     }
   } catch (err) {
-    console.error(`  [${productName}] Failed: ${err.message}`);
+    console.error(`  [${productName}] Failed (${url}): ${err.message}`);
+    return null;
   } finally {
     await page.close();
   }
-
-  return variants;
 }
 
 function saveProgress(rows, outputPath) {
@@ -246,10 +168,14 @@ function saveProgress(rows, outputPath) {
       return;
     }
 
-    console.log(`\n[${row['Product Name']}] Visiting ${urls[0]}`);
+    console.log(`\n[${row['Product Name']}] ${urls.length} color(s) to check`);
 
-    // Visit the first URL and extract ALL colors by clicking through chips
-    const variants = await extractAllVariants(urls[0], browser, colorLabel, row['Product Name']);
+    // Visit each color variant URL individually
+    const variants = [];
+    for (const url of urls) {
+      const result = await extractColorSizes(url, browser, colorLabel, row['Product Name']);
+      if (result) variants.push(result);
+    }
 
     row['Available Sizes'] = variants.length > 0 ? variants.join(' | ') : 'Unavailable';
     processed++;
