@@ -29,7 +29,7 @@ const config = countryConfig[argv.country];
 const INPUT_CSV = 'product-ids/filtered-uniqlo-products.csv';
 const OUTPUT_CSV = 'product-ids/uniqlo-with-sizes.csv';
 const N = argv.limit;
-const CONCURRENCY = 3;
+const CONCURRENCY = 5;
 const BATCH_SIZE = 5;
 
 function sleep(ms) {
@@ -58,6 +58,14 @@ async function acceptCookies(browser, localePath) {
 
 // Extract color name + available sizes from the current page state
 async function readColorAndSizes(page, colorLabel) {
+  // Wait for the color label to appear (the element we actually need)
+  try {
+    await page.waitForFunction((label) => {
+      return Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
+        .some(e => (e.textContent?.trim() || '').startsWith(label));
+    }, { timeout: 8000 }, colorLabel);
+  } catch {}
+
   const color = await page.evaluate((label) => {
     const el = Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
       .find(e => {
@@ -84,7 +92,7 @@ async function readColorAndSizes(page, colorLabel) {
 
   let sizes = [];
   try {
-    await page.waitForSelector('.size-chip-group', { timeout: 5000 });
+    await page.waitForSelector('.size-chip-group', { timeout: 3000 });
     sizes = await page.evaluate(() => {
       const wrappers = Array.from(document.querySelectorAll('.size-chip-wrapper'));
       return wrappers
@@ -100,56 +108,46 @@ async function readColorAndSizes(page, colorLabel) {
   return { color, sizes };
 }
 
-// Visit one color variant URL, read color+sizes, and discover all other color URLs on the page
-async function extractColorSizes(url, browser, colorLabel, productName) {
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1400, height: 1000 });
-  await page.setUserAgent(
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-  );
+// Discover all color codes from chip images on the current page
+async function discoverColorUrls(page) {
+  return page.evaluate(() => {
+    const productMatch = window.location.pathname.match(/\/products\/([^/]+)/);
+    if (!productMatch) return [];
+    const fullId = productMatch[1];
+    const numericId = fullId.replace(/^E/, '').replace(/-\d+$/, '');
+    const basePath = window.location.pathname.replace(/\?.*$/, '');
 
-  try {
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
-    const { color, sizes } = await readColorAndSizes(page, colorLabel);
+    const codes = new Set();
+    const chipPattern = new RegExp(`chip/goods_(\\d{2})_${numericId}`);
 
-    // Discover all color codes from the color chip images (chip/goods_XX_PRODUCTID pattern)
-    const discoveredUrls = await page.evaluate(() => {
-      const productMatch = window.location.pathname.match(/\/products\/([^/]+)/);
-      if (!productMatch) return [];
-      const fullId = productMatch[1]; // e.g. E469871-000
-      const numericId = fullId.replace(/^E/, '').replace(/-\d+$/, ''); // e.g. 469871
-      const basePath = window.location.pathname.replace(/\?.*$/, '');
-
-      const codes = new Set();
-      const chipPattern = new RegExp(`chip/goods_(\\d{2})_${numericId}`);
-
-      document.querySelectorAll('img').forEach(img => {
-        const src = img.getAttribute('src') || '';
-        const match = src.match(chipPattern);
-        if (match) codes.add(match[1]);
-      });
-
-      return [...codes].map(code =>
-        new URL(`${basePath}?colorDisplayCode=${code}`, window.location.origin).href
-      );
+    document.querySelectorAll('img').forEach(img => {
+      const src = img.getAttribute('src') || '';
+      const match = src.match(chipPattern);
+      if (match) codes.add(match[1]);
     });
 
-    const variant = (color && sizes.length > 0)
-      ? `${color}: ${sizes.join(', ')}`
-      : null;
+    return [...codes].map(code =>
+      new URL(`${basePath}?colorDisplayCode=${code}`, window.location.origin).href
+    );
+  });
+}
 
-    if (variant) {
+// Navigate to a URL on an existing page, read color+sizes
+async function visitAndRead(page, url, colorLabel, productName) {
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const { color, sizes } = await readColorAndSizes(page, colorLabel);
+
+    if (color && sizes.length > 0) {
       console.log(`  [${productName}] ${color}: ${sizes.join(', ')}`);
+      return `${color}: ${sizes.join(', ')}`;
     } else {
       console.log(`  [${productName}] ${color || 'Unknown'}: ${sizes.length > 0 ? sizes.join(', ') : 'None'}`);
+      return null;
     }
-
-    return { variant, discoveredUrls };
   } catch (err) {
     console.error(`  [${productName}] Failed (${url}): ${err.message}`);
-    return { variant: null, discoveredUrls: [] };
-  } finally {
-    await page.close();
+    return null;
   }
 }
 
@@ -196,47 +194,56 @@ function saveProgress(rows, outputPath) {
 
     console.log(`\n[${row['Product Name']}] ${csvUrls.length} color(s) from CSV`);
 
+    // Open one tab for this entire product
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1400, height: 1000 });
+    await page.setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    );
+
     const variants = [];
-    const visitedUrls = new Set();
     const seenColors = new Set();
 
-    // Visit the first URL and discover all colors from the product page
-    const firstUrl = csvUrls[0];
-    visitedUrls.add(firstUrl);
-    const { variant: firstVariant, discoveredUrls } = await extractColorSizes(firstUrl, browser, colorLabel, row['Product Name']);
-    if (firstVariant) {
-      const colorName = firstVariant.split(':')[0];
-      seenColors.add(colorName);
-      variants.push(firstVariant);
-    }
-
-    // Merge CSV URLs + discovered URLs, skip already visited
-    const allUrls = [...new Set([...csvUrls, ...discoveredUrls])];
-    const remaining = allUrls.filter(u => !visitedUrls.has(u));
-
-    if (remaining.length > 0) {
-      console.log(`  [${row['Product Name']}] Discovered ${remaining.length} additional color(s)`);
-    }
-
-    // Visit remaining URLs, skip duplicate colors, stop after 2 consecutive dupes
-    let dupeStreak = 0;
-    for (const url of remaining) {
-      if (dupeStreak >= 2) {
-        console.log(`  [${row['Product Name']}] Stopping early — remaining codes are unavailable`);
-        break;
+    try {
+      // Visit first URL, read color+sizes, discover all colors
+      const firstVariant = await visitAndRead(page, csvUrls[0], colorLabel, row['Product Name']);
+      if (firstVariant) {
+        seenColors.add(firstVariant.split(':')[0]);
+        variants.push(firstVariant);
       }
-      visitedUrls.add(url);
-      const { variant } = await extractColorSizes(url, browser, colorLabel, row['Product Name']);
-      if (variant) {
-        const colorName = variant.split(':')[0];
-        if (!seenColors.has(colorName)) {
-          seenColors.add(colorName);
-          variants.push(variant);
-          dupeStreak = 0;
-        } else {
-          dupeStreak++;
+
+      const discoveredUrls = await discoverColorUrls(page);
+
+      // Merge CSV + discovered URLs, skip the first one
+      const visitedUrls = new Set([csvUrls[0]]);
+      const allUrls = [...new Set([...csvUrls, ...discoveredUrls])];
+      const remaining = allUrls.filter(u => !visitedUrls.has(u));
+
+      if (remaining.length > 0) {
+        console.log(`  [${row['Product Name']}] Discovered ${remaining.length} additional color(s)`);
+      }
+
+      // Visit remaining on the same tab, stop after 2 consecutive dupes
+      let dupeStreak = 0;
+      for (const url of remaining) {
+        if (dupeStreak >= 2) {
+          console.log(`  [${row['Product Name']}] Stopping early — remaining codes are unavailable`);
+          break;
+        }
+        const variant = await visitAndRead(page, url, colorLabel, row['Product Name']);
+        if (variant) {
+          const colorName = variant.split(':')[0];
+          if (!seenColors.has(colorName)) {
+            seenColors.add(colorName);
+            variants.push(variant);
+            dupeStreak = 0;
+          } else {
+            dupeStreak++;
+          }
         }
       }
+    } finally {
+      await page.close();
     }
 
     row['Available Sizes'] = variants.length > 0 ? variants.join(' | ') : 'Unavailable';
