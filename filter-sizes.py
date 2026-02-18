@@ -9,11 +9,10 @@ from utils import save_or_append_df
 # ✅ Default sizes to keep
 DEFAULT_SIZES = {"XS", "S", "M", "L", "XL", "26INCH", "27INCH", "28INCH", "29INCH", "39-42"}
 
-BLOCKED_PATH = 'product-ids/blocked_ids.json'
-
-def load_blocked_config():
-    if Path(BLOCKED_PATH).exists():
-        with open(BLOCKED_PATH, 'r') as f:
+def load_blocked_config(country):
+    path = Path(f'product-ids/blocked_ids-{country}.json')
+    if path.exists():
+        with open(path, 'r') as f:
             return json.load(f)
     return {}
 
@@ -67,8 +66,8 @@ def should_keep(row, wanted_sizes, blocklist):
     return sizes_ok and discount_ok
 
 
-def main(input_csv, output_csv, wanted_sizes):
-    blocklist = load_blocked_config()
+def main(input_csv, output_csv, wanted_sizes, country):
+    blocklist = load_blocked_config(country)
 
     df = pd.read_csv(input_csv)
     initial_count = len(df)
@@ -87,6 +86,7 @@ if __name__ == "__main__":
     parser.add_argument("--input", default="uniqlo-products-with-sizes.csv", help="Input CSV path")
     parser.add_argument("--output", default="uniqlo-products-with-sizes-filtered.csv", help="Output CSV path")
     parser.add_argument("--sizes", nargs="*", default=list(DEFAULT_SIZES), help="Sizes to keep (e.g. M L XL)")
+    parser.add_argument("--country", type=str, default="de", help="Country code (e.g. de, nl, fr)")
 
     args = parser.parse_args()
-    main(args.input, args.output, set(s.upper() for s in args.sizes))
+    main(args.input, args.output, set(s.upper() for s in args.sizes), args.country)
