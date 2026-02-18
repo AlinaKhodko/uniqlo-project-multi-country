@@ -29,8 +29,8 @@ const config = countryConfig[argv.country];
 const INPUT_CSV = 'product-ids/filtered-uniqlo-products.csv';
 const OUTPUT_CSV = 'product-ids/uniqlo-with-sizes.csv';
 const N = argv.limit;
-const CONCURRENCY = 3;
-const BATCH_SIZE = 20;
+const CONCURRENCY = 1;
+const BATCH_SIZE = 1;
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -116,7 +116,6 @@ async function extractAllVariants(url, browser, colorLabel, productName) {
 
     // Find all color chip elements — try multiple selectors
     let chipCount = await page.evaluate(() => {
-      // Look for color chip images/buttons in the product's color picker
       const selectors = [
         '.color-picker .color-chip',
         '[class*="colorChip"]',
@@ -129,7 +128,6 @@ async function extractAllVariants(url, browser, colorLabel, productName) {
         const chips = document.querySelectorAll(sel);
         if (chips.length > 1) return chips.length;
       }
-      // Fallback: look for small clickable images near the color label
       const colorSection = document.querySelector('[class*="colorPicker"], [class*="color-picker"], [class*="ColorPicker"]');
       if (colorSection) {
         const clickables = colorSection.querySelectorAll('button, a, [role="radio"]');
