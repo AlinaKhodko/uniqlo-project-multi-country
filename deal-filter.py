@@ -11,7 +11,7 @@ from utils import load_country_config, save_or_append_df
 # Paths
 CSV_PATH = 'product-ids/uniqlo-products.csv'
 ID_PATH = 'product-ids/filtered-ids.txt'
-BLOCK_PATH = 'product-ids/blocked_ids.json'
+BLOCK_PATH_TEMPLATE = 'product-ids/blocked_ids-{}.json'
 OUTPUT_CSV = 'product-ids/filtered-uniqlo-products.csv'
 
 # Parse arguments
@@ -105,9 +105,10 @@ else:
     )
 
 # Load block list
+block_path = Path(BLOCK_PATH_TEMPLATE.format(args.country))
 blocked_ids = {}
-if Path(BLOCK_PATH).exists():
-    with open(BLOCK_PATH, 'r') as f:
+if block_path.exists():
+    with open(block_path, 'r') as f:
         blocked_ids = json.load(f)
 print(blocked_ids)
 filtered_ids = [pid for pid in filtered_ids if blocked_ids.get(pid) is not True]
