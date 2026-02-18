@@ -1,5 +1,5 @@
 {
-  "global_blocked_sizes": [],
+  "global_blocked_sizes": ["XS","XXS"],
   "E469816-000": ["ROSA"],
   "E476168-000": true,
   "E474411-000": true,
