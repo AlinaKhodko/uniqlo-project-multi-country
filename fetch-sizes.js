@@ -198,12 +198,17 @@ function saveProgress(rows, outputPath) {
 
     const variants = [];
     const visitedUrls = new Set();
+    const seenColors = new Set();
 
     // Visit the first URL and discover all colors from the product page
     const firstUrl = csvUrls[0];
     visitedUrls.add(firstUrl);
     const { variant: firstVariant, discoveredUrls } = await extractColorSizes(firstUrl, browser, colorLabel, row['Product Name']);
-    if (firstVariant) variants.push(firstVariant);
+    if (firstVariant) {
+      const colorName = firstVariant.split(':')[0];
+      seenColors.add(colorName);
+      variants.push(firstVariant);
+    }
 
     // Merge CSV URLs + discovered URLs, skip already visited
     const allUrls = [...new Set([...csvUrls, ...discoveredUrls])];
@@ -213,10 +218,25 @@ function saveProgress(rows, outputPath) {
       console.log(`  [${row['Product Name']}] Discovered ${remaining.length} additional color(s)`);
     }
 
+    // Visit remaining URLs, skip duplicate colors, stop after 2 consecutive dupes
+    let dupeStreak = 0;
     for (const url of remaining) {
+      if (dupeStreak >= 2) {
+        console.log(`  [${row['Product Name']}] Stopping early — remaining codes are unavailable`);
+        break;
+      }
       visitedUrls.add(url);
       const { variant } = await extractColorSizes(url, browser, colorLabel, row['Product Name']);
-      if (variant) variants.push(variant);
+      if (variant) {
+        const colorName = variant.split(':')[0];
+        if (!seenColors.has(colorName)) {
+          seenColors.add(colorName);
+          variants.push(variant);
+          dupeStreak = 0;
+        } else {
+          dupeStreak++;
+        }
+      }
     }
 
     row['Available Sizes'] = variants.length > 0 ? variants.join(' | ') : 'Unavailable';
