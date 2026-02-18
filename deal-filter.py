@@ -45,12 +45,9 @@ df['Reviews'] = df['Reviews'].replace('[^0-9]', '', regex=True).astype(float)
 df['Rating'] = pd.to_numeric(df['Rating'], errors='coerce')
 df.dropna(subset=['Reviews', 'Rating', 'Discount %'], inplace=True)
 
-# Smart review score (rating x log scale reviews)
+# Smart review score (rating x log scale reviews) — kept for history/diagnostics
 df['Review_Score'] = df['Rating'] * np.log10(df['Reviews'] + 1)
 df['Review_Score'] = df['Review_Score'].round(2)
-# Quantiles (rounded to 1 digit)
-df['Review_Score_Quantile'] = df['Review_Score'].rank(pct=True).round(2)
-df['Discount_Quantile'] = df['Discount %'].rank(pct=True).round(2)
 
 # Extract and format the unique timestamp from the 'Fetched At' column
 try:
@@ -62,32 +59,64 @@ except Exception as e:
     title_with_time = 'UNIQLO Product Insights'
     print(f"Could not format 'Fetched At' timestamp: {e}")
 
-# Categorize products
+# Categorize products using absolute thresholds (price + discount + quality)
 def classify_action(row):
-    r_q = row['Review_Score_Quantile']
-    d_q = row['Discount_Quantile']
+    promo = row['Promo Price']
+    discount = row['Discount %']
+    rating = row['Rating']
+    reviews = row['Reviews']
 
-    if r_q >= 0.9 and d_q >= 0.80:
-        return 'SUPER'
-    elif r_q >= 0.9 and 0.5 <= d_q < 0.80:
-        return 'WAIT FOR SALE'
-    elif r_q >= 0.80 and d_q >= 0.80:
-        return 'GOOD DEAL'
-    elif r_q >= 0.80 and 0.4 <= d_q < 0.80:
-        return 'DECENT'
-    elif 0.7 <= r_q < 0.8 and d_q >= 0.8:
-        return 'CHEAP UPPER MID'
-    elif r_q < 0.5 and d_q >= 0.9:
-        return 'CHEAP BUT MID'
-    elif r_q < 0.3 and d_q < 0.3:
-        return 'AVOID'
+    # Price points — how cheap is the final price (EUR)
+    if promo <= 9.90:
+        price_pts = 3
+    elif promo <= 14.90:
+        price_pts = 2
+    elif promo <= 19.90:
+        price_pts = 1
     else:
-        return 'NEUTRAL'
+        price_pts = 0
+
+    # Discount points — how big is the markdown
+    if discount >= 70:
+        discount_pts = 3
+    elif discount >= 55:
+        discount_pts = 2
+    elif discount >= 40:
+        discount_pts = 1
+    else:
+        discount_pts = 0
+
+    # Quality points — rating + review count
+    if rating >= 4.0 and reviews >= 50:
+        quality_pts = 3
+    elif rating >= 3.8 and reviews >= 20:
+        quality_pts = 2
+    elif rating >= 3.5 and reviews >= 5:
+        quality_pts = 1
+    else:
+        quality_pts = 0
+
+    total = price_pts + discount_pts + quality_pts
+
+    if total >= 7:
+        return 'STEAL'
+    elif total >= 5:
+        return 'GREAT DEAL'
+    elif price_pts >= 2 and discount_pts >= 2 and quality_pts == 0:
+        return 'BARGAIN BIN'
+    elif quality_pts >= 3 and discount_pts >= 1:
+        return 'QUALITY PICK'
+    elif total >= 4 and discount_pts >= 1:
+        return 'GOOD DEAL'
+    elif total >= 3:
+        return 'OK'
+    else:
+        return 'SKIP'
 
 df['Action'] = df.apply(classify_action, axis=1)
 
 # Select products based on filter_mode from config
-selected_actions = {'SUPER', 'GOOD DEAL', 'CHEAP UPPER MID'}
+selected_actions = {'STEAL', 'GREAT DEAL', 'GOOD DEAL', 'BARGAIN BIN', 'QUALITY PICK'}
 
 if config['filter_mode'] == 'all':
     filtered_ids = (
