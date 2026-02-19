@@ -66,6 +66,8 @@ except Exception as e:
 def classify_action(row):
     r_q = row['Review_Score_Quantile']
     d_q = row['Discount_Quantile']
+    discount = row['Discount %']
+    price = row['Promo Price']
 
     if r_q >= 0.9 and d_q >= 0.80:
         return 'SUPER'
@@ -79,6 +81,10 @@ def classify_action(row):
         return 'CHEAP UPPER MID'
     elif r_q < 0.5 and d_q >= 0.9:
         return 'CHEAP BUT MID'
+    elif discount >= 60:
+        return 'BIG DISCOUNT'
+    elif price is not None and price <= 10:
+        return 'VERY CHEAP'
     elif r_q < 0.3 and d_q < 0.3:
         return 'AVOID'
     else:
@@ -87,7 +93,7 @@ def classify_action(row):
 df['Action'] = df.apply(classify_action, axis=1)
 
 # Select products based on filter_mode from config
-selected_actions = {'SUPER', 'GOOD DEAL', 'CHEAP UPPER MID'}
+selected_actions = {'SUPER', 'GOOD DEAL', 'CHEAP UPPER MID', 'BIG DISCOUNT', 'VERY CHEAP'}
 
 if config['filter_mode'] == 'all':
     filtered_ids = (
