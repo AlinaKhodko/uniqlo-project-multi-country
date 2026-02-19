@@ -93,7 +93,7 @@ def classify_action(row):
 df['Action'] = df.apply(classify_action, axis=1)
 
 # Select products based on filter_mode from config
-selected_actions = {'SUPER', 'GOOD DEAL', 'CHEAP UPPER MID', 'BIG DISCOUNT', 'VERY CHEAP'}
+selected_actions = {'SUPER', 'GOOD DEAL', 'CHEAP UPPER MID', 'BIG DISCOUNT'}
 
 if config['filter_mode'] == 'all':
     filtered_ids = (
