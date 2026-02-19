@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 import json
 import re
-import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime
@@ -15,12 +14,12 @@ CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 # 📄 Paths
 CSV_PATH = 'product-ids/sizes-filtered.csv'
+BLOCKED_PATH = 'product-ids/blocked_ids.json'
 
 
-def load_blocked_config(country):
-    path = Path(f'product-ids/blocked_ids-{country}.json')
-    if path.exists():
-        with open(path, 'r') as f:
+def load_blocked_config():
+    if Path(BLOCKED_PATH).exists():
+        with open(BLOCKED_PATH, 'r') as f:
             return json.load(f)
     return {}
 
@@ -129,7 +128,7 @@ def filter_variants(sizes_str, product_id, blocklist):
 
 
 # ✍️ Build message
-def create_message_from_csv(csv_path, country, max_items=40):
+def create_message_from_csv(csv_path, max_items=40):
     if not Path(csv_path).exists():
         return "❌ No product data found."
 
@@ -139,7 +138,7 @@ def create_message_from_csv(csv_path, country, max_items=40):
         return "ℹ️ No interesting products to report."
 
     # 🔒 Load blocked list
-    blocklist = load_blocked_config(country)
+    blocklist = load_blocked_config()
 
     # 🧹 Filter fully blocked products
     df = df[~df.apply(lambda row: is_blocked(row['Product ID'], row.get('Available Sizes', ''), blocklist), axis=1)]
@@ -216,11 +215,7 @@ def send_telegram(text):
 
 # 🔁 Entry point
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Send UNIQLO digest to Telegram")
-    parser.add_argument("--country", type=str, default="de", help="Country code (e.g. de, nl, fr)")
-    args = parser.parse_args()
-
-    msg = create_message_from_csv(CSV_PATH, args.country)
+    msg = create_message_from_csv(CSV_PATH)
     print("---- Message Preview ----")
     print(msg)
     print("-------------------------\n")
