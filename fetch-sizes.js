@@ -57,13 +57,25 @@ async function acceptCookies(browser, localePath) {
 }
 
 // Extract color name + available sizes from the current page state
-async function readColorAndSizes(page, colorLabel) {
-  // Wait for the color label to appear (the element we actually need)
+async function readColorAndSizes(page, colorLabel, expectedColorCode) {
+  // Wait for the specific color code to appear in the label element.
+  // Without this, the old SSR-rendered color stays in the DOM after domcontentloaded
+  // fires, causing us to read the previous color's data for every subsequent URL.
   try {
-    await page.waitForFunction((label) => {
-      return Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
-        .some(e => (e.textContent?.trim() || '').startsWith(label));
-    }, { timeout: 8000 }, colorLabel);
+    if (expectedColorCode) {
+      await page.waitForFunction((label, code) => {
+        return Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
+          .some(e => {
+            const text = e.textContent?.trim() || '';
+            return text.startsWith(label) && text.includes(code);
+          });
+      }, { timeout: 8000 }, colorLabel, expectedColorCode);
+    } else {
+      await page.waitForFunction((label) => {
+        return Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
+          .some(e => (e.textContent?.trim() || '').startsWith(label));
+      }, { timeout: 8000 }, colorLabel);
+    }
   } catch {}
 
   const color = await page.evaluate((label) => {
@@ -136,7 +148,8 @@ async function discoverColorUrls(page) {
 async function visitAndRead(page, url, colorLabel, productName) {
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    const { color, sizes } = await readColorAndSizes(page, colorLabel);
+    const colorCode = new URL(url).searchParams.get('colorDisplayCode') || null;
+    const { color, sizes } = await readColorAndSizes(page, colorLabel, colorCode);
 
     if (color && sizes.length > 0) {
       console.log(`  [${productName}] ${color}: ${sizes.join(', ')}`);
