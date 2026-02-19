@@ -172,7 +172,7 @@ def create_message_from_csv(csv_path, country, max_items=40):
         filtered_sizes = filter_variants(sizes, row['Product ID'], blocklist)
 
         # If all variants were removed, skip this product
-        if not filtered_sizes or pd.isna(filtered_sizes) or str(filtered_sizes).strip().lower() == 'unavailable':
+        if not filtered_sizes or filtered_sizes.strip().lower() == 'unavailable':
             continue
 
         message += f"\n🔗 [{name}]({url})"
