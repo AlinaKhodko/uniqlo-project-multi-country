@@ -57,13 +57,25 @@ async function acceptCookies(browser, localePath) {
 }
 
 // Extract color name + available sizes from the current page state
-async function readColorAndSizes(page, colorLabel) {
-  // Wait for the color label to appear (the element we actually need)
+async function readColorAndSizes(page, colorLabel, expectedColorCode) {
+  // Wait for the exact color code to appear in the label element.
+  // This prevents reading stale SSR content or a previous color's data
+  // when reusing a tab for multiple color navigations.
   try {
-    await page.waitForFunction((label) => {
-      return Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
-        .some(e => (e.textContent?.trim() || '').startsWith(label));
-    }, { timeout: 8000 }, colorLabel);
+    if (expectedColorCode) {
+      await page.waitForFunction((label, code) => {
+        return Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
+          .some(e => {
+            const text = e.textContent?.trim() || '';
+            return text.startsWith(label) && text.includes(code);
+          });
+      }, { timeout: 8000 }, colorLabel, expectedColorCode);
+    } else {
+      await page.waitForFunction((label) => {
+        return Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
+          .some(e => (e.textContent?.trim() || '').startsWith(label));
+      }, { timeout: 8000 }, colorLabel);
+    }
   } catch {}
 
   const color = await page.evaluate((label) => {
@@ -136,7 +148,9 @@ async function discoverColorUrls(page) {
 async function visitAndRead(page, url, colorLabel, productName) {
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    const { color, sizes } = await readColorAndSizes(page, colorLabel);
+    // Extract expected color code so readColorAndSizes waits for the right color
+    const colorCode = new URL(url).searchParams.get('colorDisplayCode') || null;
+    const { color, sizes } = await readColorAndSizes(page, colorLabel, colorCode);
 
     if (color && sizes.length > 0) {
       console.log(`  [${productName}] ${color}: ${sizes.join(', ')}`);
@@ -223,7 +237,8 @@ function saveProgress(rows, outputPath) {
         console.log(`  [${row['Product Name']}] Discovered ${remaining.length} additional color(s)`);
       }
 
-      // Visit remaining on the same tab, stop after 2 consecutive dupes
+      // Visit remaining on the same tab, stop after 2 consecutive misses
+      // (a "miss" is either an unavailable color with no sizes, or a duplicate color name)
       let dupeStreak = 0;
       for (const url of remaining) {
         if (dupeStreak >= 2) {
@@ -240,6 +255,9 @@ function saveProgress(rows, outputPath) {
           } else {
             dupeStreak++;
           }
+        } else {
+          // null means no sizes available for this color — count as a miss
+          dupeStreak++;
         }
       }
     } finally {
