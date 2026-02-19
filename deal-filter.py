@@ -142,6 +142,11 @@ else:
 columns_to_drop = ['Price (Promo)', 'Price (Original)']
 filtered_df_csv = filtered_df.drop(columns=[col for col in columns_to_drop if col in filtered_df.columns])
 
+# Exclude fully-blocked products so fetch-sizes.js skips them entirely
+filtered_df_csv = filtered_df_csv[
+    ~filtered_df_csv['Product ID'].astype(str).apply(lambda pid: blocked_ids.get(pid) is True)
+]
+
 # Save filtered dataset
 filtered_df_csv.to_csv(OUTPUT_CSV, index=False)
 
