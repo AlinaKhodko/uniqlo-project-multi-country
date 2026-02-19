@@ -81,9 +81,9 @@ def classify_action(row):
         return 'CHEAP UPPER MID'
     elif r_q < 0.5 and d_q >= 0.9:
         return 'CHEAP BUT MID'
-    elif discount >= 60:
+    elif discount >= 76:
         return 'BIG DISCOUNT'
-    elif price is not None and price <= 10:
+    elif price is not None and price <= 5:
         return 'VERY CHEAP'
     elif r_q < 0.3 and d_q < 0.3:
         return 'AVOID'
