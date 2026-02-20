@@ -13,6 +13,9 @@ SEASON_MAP = {12: "Winter", 1: "Winter", 2: "Winter",
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    df["fetched_at"] = pd.to_datetime(df["fetched_at"], format='ISO8601')
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
     df["day_name"]   = df["day_of_week"].map(lambda d: DAY_NAMES[int(d)])
     df["month_name"] = df["month"].map(lambda m: MONTH_NAMES[int(m) - 1])
     df["season"]     = df["month"].map(lambda m: SEASON_MAP[int(m)])

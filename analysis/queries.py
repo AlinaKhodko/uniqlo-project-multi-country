@@ -55,9 +55,13 @@ GOOD_ACTIONS = ("SUPER", "GOOD DEAL", "BIG DISCOUNT", "VERY CHEAP", "CHEAP UPPER
 def load_timeseries(engine, size: str = None, gender: str = None,
                     actions: tuple = None, days: int = None) -> pd.DataFrame:
     """Load full timeseries with optional filters."""
-    conditions = []
+    conditions = ["pv.size IS NOT NULL", "pv.size != ''"]
     if size:
-        conditions.append(f"pv.size = '{size}'")
+        if isinstance(size, (list, tuple)):
+            quoted = ", ".join(f"'{s}'" for s in size)
+            conditions.append(f"pv.size IN ({quoted})")
+        else:
+            conditions.append(f"pv.size = '{size}'")
     if gender:
         conditions.append(f"p.gender = '{gender}'")
     if actions:
@@ -124,7 +128,14 @@ ORDER BY 1, 2
 
 def load_deal_heatmap(engine, size: str = None) -> pd.DataFrame:
     good = str(GOOD_ACTIONS).replace("'", "'").replace("(", "(").replace(")", ")")
-    where = f"WHERE pv.size = '{size}'" if size else ""
+    if size:
+        if isinstance(size, (list, tuple)):
+            quoted = ", ".join(f"'{s}'" for s in size)
+            where = f"WHERE pv.size IN ({quoted})"
+        else:
+            where = f"WHERE pv.size = '{size}'"
+    else:
+        where = ""
     sql = HEATMAP_SQL.format(
         good_actions=str(GOOD_ACTIONS),
         where=where

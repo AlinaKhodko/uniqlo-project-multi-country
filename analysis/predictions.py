@@ -124,6 +124,55 @@ def price_drop_probability(df: pd.DataFrame, target_price: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Price drop timing — P(price dropped vs previous fetch | day, hour)
+# ---------------------------------------------------------------------------
+
+def price_drop_timing(df: pd.DataFrame):
+    """
+    For each (day_of_week, hour), compute:
+      - drop_rate   : fraction of fetches where a product's price was lower than its previous fetch
+      - avg_drop_pct: average % size of those drops
+
+    Returns (drop_rate_pivot, avg_drop_pivot) — both indexed by hour, columned by day name.
+    """
+    d = df.sort_values(["product_id", "size", "color", "fetched_at"]).copy()
+    d["prev_price"] = d.groupby(["product_id", "size", "color"])["promo_price"].shift(1)
+
+    # Only rows where a previous price exists
+    d = d[d["prev_price"].notna()].copy()
+    d["price_dropped"] = (d["promo_price"] < d["prev_price"]).astype(int)
+    d["drop_pct"] = np.where(
+        d["price_dropped"] == 1,
+        (d["prev_price"] - d["promo_price"]) / d["prev_price"] * 100,
+        np.nan,
+    )
+
+    agg = (
+        d.groupby(["day_of_week", "hour"])
+        .agg(
+            drops=("price_dropped", "sum"),
+            total=("price_dropped", "count"),
+            avg_drop_pct=("drop_pct", "mean"),
+        )
+        .reset_index()
+    )
+    agg["drop_rate"] = agg["drops"] / agg["total"].clip(lower=1)
+
+    day_map = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat"}
+    agg["day_name"] = agg["day_of_week"].map(day_map)
+
+    col_order = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+    rate_pivot = agg.pivot(index="hour", columns="day_name", values="drop_rate")
+    avg_pivot  = agg.pivot(index="hour", columns="day_name", values="avg_drop_pct")
+
+    rate_pivot = rate_pivot.reindex(columns=[c for c in col_order if c in rate_pivot.columns]).fillna(0)
+    avg_pivot  = avg_pivot.reindex(columns=[c for c in col_order if c in avg_pivot.columns]).fillna(0)
+
+    return rate_pivot, avg_pivot
+
+
+# ---------------------------------------------------------------------------
 # Best time to buy recommendation
 # ---------------------------------------------------------------------------
 
