@@ -3,7 +3,7 @@ name: UNIQLO Multi
 on:
   schedule:
     # Run at xx:29 every hour from 03:29 to 20:29 UTC
-    - cron: '29 3-20 * * *'
+    - cron: '29 3-21 * * *'
 
     # Run at xx:00 every hour from 04:00 to 21:00 UTC
     - cron: '0 4-21 * * *'
