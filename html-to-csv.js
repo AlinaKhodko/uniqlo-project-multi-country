@@ -50,7 +50,7 @@ function fixMojibake(str) {
 const baseUrl = 'https://www.uniqlo.com';
 const rows = [['Product ID', 'Product Name', 'Price (Promo)', 'Price (Original)', 'Rating', 'Reviews', 'Product URL', 'Color Variant URLs', 'Fetched At']];
 const seen = new Set();
-
+const stats = { total: 0, withLink: 0, noLink: 0, priceSuspect: 0 };
 // Selector to catch all product blocks
 const productBlocks = $('a[href*="/products/"]');
 console.log(`Found ${productBlocks.length} product blocks`);
@@ -70,6 +70,8 @@ productBlocks.each((_, el) => {
   }
 
   const name = fixMojibake(allTexts[1] || '');
+  const [gender, sizeOnly] = (allTexts[0] || '').split(',').map(s => s.trim());
+// gender -> "Herren", sizeOnly -> "XS-3XL"
   const promoPrice = fixMojibake(allTexts[2] || '');
   const originalPrice = fixMojibake(allTexts[3] || '');
 
@@ -91,14 +93,37 @@ productBlocks.each((_, el) => {
   const localePath = config.locale_path;
   const productBaseURL = `${baseUrl}/${localePath}/products/${productId}/${suffix}`;
 
-  const rawCodes = $el.find('img.image__img')
+  // const rawCodes = $el.find('img.image__img')
+  //   .map((_, img) => {
+  //     const src = $(img).attr('src') || '';
+  //     const match = src.match(/goods_(\d{2})_/);
+  //     return match ? match[1] : null;
+  //   })
+  //   .get()
+  //   .filter(Boolean);
+
+  // const colorVariantURLs = [...new Set(rawCodes.map(code =>
+  //   `${productBaseURL}?colorDisplayCode=${code}`
+  // ))].join(' | ');
+
+  // Default color code from the href — always present in the DOM,
+  // independent of image lazy-loading.
+  const defaultColor = productHref.match(/colorDisplayCode=(\d+)/)?.[1] || null;
+
+  // Color codes from tile images — read data-src FIRST. The real URL lives
+  // in data-src before the lazy <img> swaps it into src; un-scrolled tiles
+  // have an empty/placeholder src, which is why most links came back blank.
+  const imgCodes = $el.find('img.image__img')
     .map((_, img) => {
-      const src = $(img).attr('src') || '';
+      const src = $(img).attr('data-src') || $(img).attr('src') || '';
       const match = src.match(/goods_(\d{2})_/);
       return match ? match[1] : null;
     })
     .get()
     .filter(Boolean);
+
+  // Default color first, then any variants found in images, deduped.
+  const rawCodes = [defaultColor, ...imgCodes].filter(Boolean);
 
   const colorVariantURLs = [...new Set(rawCodes.map(code =>
     `${productBaseURL}?colorDisplayCode=${code}`
@@ -120,11 +145,31 @@ productBlocks.each((_, el) => {
         fetchedAt
       ]);
       console.log(`Parsed: ${name} | ${promoPrice} | ${colorVariantURLs}`);
+
+      stats.total++;
+      colorVariantURLs ? stats.withLink++ : stats.noLink++;
+
+      const priceOk = /^[\d.,\s€$£¥]+$/.test(originalPrice);
+      if (originalPrice && !priceOk) stats.priceSuspect++;
+
+      console.log(
+        `Parsed: ${name}\n` +
+        `   size:   ${[gender, sizeOnly].filter(Boolean).join(', ') || '—'}\n` +
+        `   price:  ${promoPrice || '—'}  (was ${originalPrice || '—'})${priceOk ? '' : '  ⚠ price looks off'}\n` +
+        `   colors: default=${defaultColor ?? '—'}  img=[${imgCodes.join(',') || '—'}]\n` +
+        `   links:  ${colorVariantURLs || '⚠ NONE'}`
+      );
     }
   } else {
     console.log(`Skipped: ${productURL} | name: "${name}"`);
   }
 });
+
+console.log(`\n=== Summary ===`);
+console.log(`Parsed products : ${stats.total}`);
+console.log(`With link       : ${stats.withLink}`);
+console.log(`Missing link    : ${stats.noLink}   ${stats.noLink === 0 ? '✓ all good' : '⚠ investigate'}`);
+console.log(`Suspect prices  : ${stats.priceSuspect}  ${stats.priceSuspect === 0 ? '✓' : '⚠ possible positional shift'}`);
 
 // Write to CSV (RFC 4180: escape " as "")
 const csvData = rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',')).join('\n');
