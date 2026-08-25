@@ -1,4 +1,16 @@
-const puppeteer = require('puppeteer');
+// Reads available sizes per colour from Uniqlo's own JSON API.
+//
+// Replaces the Puppeteer scraper (kept as fetch-sizes-browser.js). The product
+// pages sit behind an Akamai bot wall that 403s headless Chrome, but the API the
+// page itself calls answers a plain HTTPS request as long as the x-fr-clientid
+// header is present. Two calls per product:
+//
+//   details -> colour names, size names, display order
+//   l2s     -> every colour x size combination plus its stock status
+//
+// Output format is identical to the browser version, so filter-sizes.py and
+// everything downstream is unchanged.
+
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
@@ -25,6 +37,7 @@ const argv = yargs
   .argv;
 
 const config = countryConfig[argv.country];
+const COUNTRY = argv.country;
 
 const INPUT_CSV = 'product-ids/filtered-uniqlo-products.csv';
 const OUTPUT_CSV = 'product-ids/uniqlo-with-sizes.csv';
@@ -32,136 +45,110 @@ const N = argv.limit;
 const CONCURRENCY = 5;
 const BATCH_SIZE = 5;
 
+const API_BASE = `https://www.uniqlo.com/${COUNTRY}/api/commerce/v5/${COUNTRY}`;
+// The web app identifies itself with this header; without it the API replies
+// 400 "invalid or missing client id".
+const CLIENT_ID = config.api_client_id || `uq.${COUNTRY}.web-spa`;
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+const REQUEST_TIMEOUT_MS = 15000;
+const MAX_RETRIES = 3;
+
+let failedRequests = 0;
+
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-async function acceptCookies(browser, localePath) {
-  const page = await browser.newPage();
-  try {
-    await page.goto(`https://www.uniqlo.com/${localePath}`, {
-      waitUntil: 'networkidle2',
-      timeout: 20000
-    });
+async function getJson(url) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      await page.waitForSelector('button#onetrust-accept-btn-handler', { timeout: 5000 });
-      await page.click('button#onetrust-accept-btn-handler');
-      await sleep(1000);
-      console.log('Accepted cookies on throwaway page');
-    } catch {
-      console.log('No cookie popup found');
-    }
-  } finally {
-    await page.close();
-  }
-}
-
-// Extract color name + available sizes from the current page state
-async function readColorAndSizes(page, colorLabel, expectedColorCode) {
-  // Wait for the specific color code to appear in the label element.
-  // Without this, the old SSR-rendered color stays in the DOM after domcontentloaded
-  // fires, causing us to read the previous color's data for every subsequent URL.
-  try {
-    if (expectedColorCode) {
-      await page.waitForFunction((label, code) => {
-        return Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
-          .some(e => {
-            const text = e.textContent?.trim() || '';
-            return text.startsWith(label) && text.includes(code);
-          });
-      }, { timeout: 8000 }, colorLabel, expectedColorCode);
-    } else {
-      await page.waitForFunction((label) => {
-        return Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
-          .some(e => (e.textContent?.trim() || '').startsWith(label));
-      }, { timeout: 8000 }, colorLabel);
-    }
-  } catch {}
-
-  const color = await page.evaluate((label) => {
-    const el = Array.from(document.querySelectorAll('[data-testid="ITOTypography"]'))
-      .find(e => {
-        const text = e.textContent?.trim() || '';
-        return text.startsWith(label);
+      const response = await fetch(url, {
+        headers: {
+          'x-fr-clientid': CLIENT_ID,
+          'User-Agent': USER_AGENT,
+          'Accept': 'application/json',
+          'Accept-Language': config.accept_language
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       });
 
-    if (!el) return null;
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
 
-    const text = el.textContent.trim();
-    const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`^${escapedLabel}\\s+(\\d+)\\s+(.+)$`);
-    const match = text.match(regex);
-    if (!match) return null;
-
-    const code = match[1];
-    const name = match[2];
-
-    const pathMatch = window.location.pathname.match(/products\/[^/]+\/(\w+)/);
-    const pathPart = pathMatch ? pathMatch[1] : '00';
-
-    return `${pathPart}${code}-${name.toUpperCase()}`;
-  }, colorLabel);
-
-  let sizes = [];
-  try {
-    await page.waitForSelector('.size-chip-group', { timeout: 3000 });
-    sizes = await page.evaluate(() => {
-      const wrappers = Array.from(document.querySelectorAll('.size-chip-wrapper'));
-      return wrappers
-        .filter(wrapper => !wrapper.querySelector('.strike'))
-        .map(wrapper => {
-          const button = wrapper.querySelector('button');
-          return button?.innerText?.trim() || null;
-        })
-        .filter(Boolean);
-    });
-  } catch {}
-
-  return { color, sizes };
-}
-
-// Discover all color codes from chip images on the current page
-async function discoverColorUrls(page) {
-  return page.evaluate(() => {
-    const productMatch = window.location.pathname.match(/\/products\/([^/]+)/);
-    if (!productMatch) return [];
-    const fullId = productMatch[1];
-    const numericId = fullId.replace(/^E/, '').replace(/-\d+$/, '');
-    const basePath = window.location.pathname.replace(/\?.*$/, '');
-
-    const codes = new Set();
-    const chipPattern = new RegExp(`chip/goods_(\\d{2})_${numericId}`);
-
-    document.querySelectorAll('img').forEach(img => {
-      const src = img.getAttribute('src') || '';
-      const match = src.match(chipPattern);
-      if (match) codes.add(match[1]);
-    });
-
-    return [...codes].map(code =>
-      new URL(`${basePath}?colorDisplayCode=${code}`, window.location.origin).href
-    );
-  });
-}
-
-// Navigate to a URL on an existing page, read color+sizes
-async function visitAndRead(page, url, colorLabel, productName) {
-  try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    const colorCode = new URL(url).searchParams.get('colorDisplayCode') || null;
-    const { color, sizes } = await readColorAndSizes(page, colorLabel, colorCode);
-
-    if (color && sizes.length > 0) {
-      console.log(`  [${productName}] ${color}: ${sizes.join(', ')}`);
-      return `${color}: ${sizes.join(', ')}`;
-    } else {
-      console.log(`  [${productName}] ${color || 'Unknown'}: ${sizes.length > 0 ? sizes.join(', ') : 'None'}`);
-      return null;
+      const body = await response.json();
+      if (body.status !== 'ok') {
+        throw new Error(`API status ${body.status}: ${JSON.stringify(body.error || {})}`);
+      }
+      return body.result;
+    } catch (err) {
+      lastError = err;
+      if (attempt < MAX_RETRIES) await sleep(500 * attempt);
     }
-  } catch (err) {
-    console.error(`  [${productName}] Failed (${url}): ${err.message}`);
-    return null;
   }
+
+  failedRequests++;
+  throw lastError;
+}
+
+// Product URLs look like /de/de/products/E481369-000/00?colorDisplayCode=69 -
+// the segment after the product id is the price group, which the API needs.
+function parseProductRef(row) {
+  const url = row['Product URL'] || (row['Color Variant URLs'] || '').split('|')[0] || '';
+  const match = url.match(/\/products\/(E?\d+-\d+)(?:\/(\w+))?/);
+
+  if (match) {
+    return { productId: match[1], priceGroup: match[2] || '00' };
+  }
+  if (row['Product ID']) {
+    return { productId: row['Product ID'], priceGroup: '00' };
+  }
+  return null;
+}
+
+async function fetchSizes(productId, priceGroup) {
+  const base = `${API_BASE}/products/${productId}/price-groups/${priceGroup}`;
+
+  const [details, l2s] = await Promise.all([
+    getJson(`${base}/details?includeModelSize=true&httpFailure=true`),
+    getJson(`${base}/l2s?withPrices=true&withStocks=true&httpFailure=true`)
+  ]);
+
+  const sizeNames = new Map((details.sizes || []).map(s => [s.displayCode, s.name]));
+  const sizeOrder = new Map((details.sizes || []).map((s, i) => [s.displayCode, i]));
+  const stocks = l2s.stocks || {};
+
+  // disableSizeChip is the flag the site uses to strike a size chip through, so it
+  // matches what the browser scraper read off the DOM across IN_STOCK, LOW_STOCK
+  // and STOCK_OUT alike.
+  const availableByColor = new Map();
+  for (const item of l2s.l2s || []) {
+    const stock = stocks[item.l2Id];
+    if (!stock || stock.disableSizeChip) continue;
+
+    const colorCode = item.color.displayCode;
+    if (!availableByColor.has(colorCode)) availableByColor.set(colorCode, []);
+    availableByColor.get(colorCode).push(item.size.displayCode);
+  }
+
+  const variants = [];
+  for (const color of details.colors || []) {
+    const codes = availableByColor.get(color.displayCode);
+    if (!codes || codes.length === 0) continue;
+
+    const sizes = [...new Set(codes)]
+      .sort((a, b) => (sizeOrder.get(a) ?? 99) - (sizeOrder.get(b) ?? 99))
+      .map(code => sizeNames.get(code) || code);
+
+    // Same label shape as the browser version: price group + colour code + name.
+    variants.push(`${priceGroup}${color.displayCode}-${color.name.toUpperCase()}: ${sizes.join(', ')}`);
+  }
+
+  return variants;
 }
 
 function saveProgress(rows, outputPath) {
@@ -171,10 +158,8 @@ function saveProgress(rows, outputPath) {
 
 (async () => {
   const rows = [];
-  const colorLabel = config.color_label;
   const outputPath = path.join(__dirname, OUTPUT_CSV);
 
-  // Read CSV
   await new Promise((resolve, reject) => {
     fs.createReadStream(path.join(__dirname, INPUT_CSV))
       .pipe(csv())
@@ -183,83 +168,35 @@ function saveProgress(rows, outputPath) {
       .on('error', reject);
   });
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--window-size=1400,1000']
-  });
-
-  // Accept cookies once on a throwaway page
-  await acceptCookies(browser, config.locale_path);
-
   const total = Math.min(N, rows.length);
   let processed = 0;
 
   async function processProduct(row) {
-    const csvUrls = row['Color Variant URLs']
-      ? row['Color Variant URLs'].split('|').map(url => url.trim()).filter(Boolean)
-      : [];
+    const ref = parseProductRef(row);
 
-    if (csvUrls.length === 0) {
+    if (!ref) {
+      console.log(`[${row['Product Name']}] No product id - skipping`);
       row['Available Sizes'] = 'Unavailable';
       processed++;
       return;
     }
 
-    console.log(`\n[${row['Product Name']}] ${csvUrls.length} color(s) from CSV`);
-
-    // Open one tab for this entire product
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1400, height: 1000 });
-    await page.setUserAgent(
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    );
-
-    const variants = [];
-    const seenColors = new Set();
-
     try {
-      // Visit first URL, read color+sizes, discover all colors
-      const firstVariant = await visitAndRead(page, csvUrls[0], colorLabel, row['Product Name']);
-      if (firstVariant) {
-        seenColors.add(firstVariant.split(':')[0]);
-        variants.push(firstVariant);
+      const variants = await fetchSizes(ref.productId, ref.priceGroup);
+
+      if (variants.length > 0) {
+        console.log(`[${row['Product Name']}] ${variants.length} colour(s) in stock`);
+        for (const variant of variants) console.log(`  ${variant}`);
+      } else {
+        console.log(`[${row['Product Name']}] Sold out in every colour`);
       }
 
-      const discoveredUrls = await discoverColorUrls(page);
-
-      // Merge CSV + discovered URLs, skip the first one
-      const visitedUrls = new Set([csvUrls[0]]);
-      const allUrls = [...new Set([...csvUrls, ...discoveredUrls])];
-      const remaining = allUrls.filter(u => !visitedUrls.has(u));
-
-      if (remaining.length > 0) {
-        console.log(`  [${row['Product Name']}] Discovered ${remaining.length} additional color(s)`);
-      }
-
-      // Visit remaining on the same tab, stop after 2 consecutive dupes
-      let dupeStreak = 0;
-      for (const url of remaining) {
-        if (dupeStreak >= 2) {
-          console.log(`  [${row['Product Name']}] Stopping early — remaining codes are unavailable`);
-          break;
-        }
-        const variant = await visitAndRead(page, url, colorLabel, row['Product Name']);
-        if (variant) {
-          const colorName = variant.split(':')[0];
-          if (!seenColors.has(colorName)) {
-            seenColors.add(colorName);
-            variants.push(variant);
-            dupeStreak = 0;
-          } else {
-            dupeStreak++;
-          }
-        }
-      }
-    } finally {
-      await page.close();
+      row['Available Sizes'] = variants.length > 0 ? variants.join(' | ') : 'Unavailable';
+    } catch (err) {
+      console.error(`[${row['Product Name']}] Failed (${ref.productId}/${ref.priceGroup}): ${err.message}`);
+      row['Available Sizes'] = 'Unavailable';
     }
 
-    row['Available Sizes'] = variants.length > 0 ? variants.join(' | ') : 'Unavailable';
     processed++;
 
     if (processed % BATCH_SIZE === 0) {
@@ -268,14 +205,17 @@ function saveProgress(rows, outputPath) {
     }
   }
 
-  // Process products with concurrency pool
   for (let i = 0; i < total; i += CONCURRENCY) {
     const batch = rows.slice(i, Math.min(i + CONCURRENCY, total));
     await Promise.all(batch.map(row => processProduct(row)));
   }
 
-  // Final save
   saveProgress(rows, outputPath);
-  await browser.close();
+
+  const withSizes = rows.slice(0, total).filter(r => r['Available Sizes'] !== 'Unavailable').length;
   console.log(`\nFinal CSV saved to ${OUTPUT_CSV}`);
+  console.log(`${withSizes}/${total} products have at least one size in stock`);
+  if (failedRequests > 0) {
+    console.error(`WARNING: ${failedRequests} API request(s) failed after ${MAX_RETRIES} attempts.`);
+  }
 })();
