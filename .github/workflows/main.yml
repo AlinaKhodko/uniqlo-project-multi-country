@@ -61,7 +61,7 @@ jobs:
     - name: Install Node dependencies
       run: |
         npm init
-        npm install puppeteer csv-parser json2csv dotenv cheerio yargs
+        npm install csv-parser json2csv dotenv cheerio yargs
 
     - name: Setup Python
       uses: actions/setup-python@v4
@@ -83,8 +83,7 @@ jobs:
 
     - name: Run Workflow
       run: |
-        node fetch-html.js --country ${{ matrix.country }} --output product-ids/uniqlo-raw.html
-        node html-to-csv.js --country ${{ matrix.country }}
+        node fetch-products.js --country ${{ matrix.country }}
         python deal-filter.py --country ${{ matrix.country }}
         node fetch-sizes.js --country ${{ matrix.country }} || echo "fetch-sizes.js failed, continuing..."
         python filter-sizes.py --input product-ids/uniqlo-with-sizes.csv --output product-ids/sizes-filtered.csv

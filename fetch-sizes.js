@@ -151,24 +151,35 @@ async function fetchSizes(productId, priceGroup) {
   return variants;
 }
 
-function saveProgress(rows, outputPath) {
-  const csvOutput = parse(rows, { fields: Object.keys(rows[0]) });
+// `headers` is the input CSV header, so an empty input still yields a valid
+// header-only file for filter-sizes.py instead of crashing on rows[0].
+function saveProgress(rows, headers, outputPath) {
+  const fields = rows.length > 0 ? Object.keys(rows[0]) : [...headers, 'Available Sizes'];
+  const csvOutput = parse(rows, { fields });
   fs.writeFileSync(outputPath, csvOutput, 'utf8');
 }
 
 (async () => {
   const rows = [];
+  let headers = [];
   const outputPath = path.join(__dirname, OUTPUT_CSV);
 
   await new Promise((resolve, reject) => {
     fs.createReadStream(path.join(__dirname, INPUT_CSV))
       .pipe(csv())
+      .on('headers', h => { headers = h; })
       .on('data', row => rows.push(row))
       .on('end', resolve)
       .on('error', reject);
   });
 
   const total = Math.min(N, rows.length);
+
+  if (total === 0) {
+    saveProgress(rows, headers, outputPath);
+    console.log(`No products in ${INPUT_CSV} - wrote header-only ${OUTPUT_CSV}`);
+    return;
+  }
   let processed = 0;
 
   async function processProduct(row) {
@@ -200,7 +211,7 @@ function saveProgress(rows, outputPath) {
     processed++;
 
     if (processed % BATCH_SIZE === 0) {
-      saveProgress(rows, outputPath);
+      saveProgress(rows, headers, outputPath);
       console.log(`--- Saved progress (${processed}/${total}) ---`);
     }
   }
@@ -210,7 +221,7 @@ function saveProgress(rows, outputPath) {
     await Promise.all(batch.map(row => processProduct(row)));
   }
 
-  saveProgress(rows, outputPath);
+  saveProgress(rows, headers, outputPath);
 
   const withSizes = rows.slice(0, total).filter(r => r['Available Sizes'] !== 'Unavailable').length;
   console.log(`\nFinal CSV saved to ${OUTPUT_CSV}`);
